@@ -3,6 +3,7 @@ Parsers
 
 Functions related to parsing things out of beautiful soup objects.
 """
+import time
 import urllib.parse
 from typing import Iterable
 
@@ -165,8 +166,9 @@ def parse_wiki_page(client, url):
     parsed_url = urllib.parse.urlparse(url)
     return {
         "url": url,
-        "url_path": parsed_url.path,
+        "url_scheme": parsed_url.scheme,
         "url_host": parsed_url.netloc,
+        "url_path": parsed_url.path,
         "page_title": soup.find("title").get_text(),
         "page_date": soup.find("time", {"class": "omnipedia-current-date"}).get(
             "datetime"
@@ -182,3 +184,30 @@ def parse_wiki_page(client, url):
         "toc": parse_toc(soup),
         "links": [parse_link(link) for link in soup.find_all("a")],
     }
+
+
+def parse_wiki(client, url):
+    urls = []
+    res = []
+
+    def wiki_parser(client, url):
+        if url not in urls:
+            print(f"Scraping {url}")
+            page_data = parse_wiki_page(client, url)
+            urls.append(url)
+            res.append(page_data)
+            links = [
+                page_data["url_scheme"]
+                + "://"
+                + page_data["url_host"]
+                + link["url"]
+                for link in page_data["links"]
+                if link["type"] == "wiki_page_link"
+            ]
+            for link in links:
+                wiki_parser(client, link)
+                print("Waiting a moment to parse the next page")
+                time.sleep(1)
+
+    wiki_parser(client, url)
+    return res
