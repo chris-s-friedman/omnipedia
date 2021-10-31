@@ -8,7 +8,7 @@ import urllib.parse
 from typing import Iterable
 
 from bs4 import BeautifulSoup
-from ompedia_tools.utils import is_date, to_bool
+from ompedia_tools.utils.common import is_date, to_bool
 
 
 def parse_infobox(soup):
