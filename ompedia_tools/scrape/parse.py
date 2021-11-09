@@ -4,11 +4,14 @@ Parsers
 Functions related to parsing things out of beautiful soup objects.
 """
 import time
-import urllib.parse
 from typing import Iterable
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from ompedia_tools.utils.common import is_date, to_bool
+from ompedia_tools.utils.logging import get_logger
+
+logger = get_logger(__name__, testing_mode=False)
 
 
 def parse_infobox(soup):
@@ -23,7 +26,11 @@ def parse_infobox(soup):
     which is information about the media inside the infobox
     :rtype: dict
     """
+    logger.debug("Parsing infobox")
     infobox = soup.find("div", {"class": "omnipedia-infobox"})
+    if infobox is None:
+        logger.warning("No infobox found")
+        return None
     infobox_dict = {}
     infobox_dict["name"] = infobox.find(
         "strong", {"class": "omnipedia-infobox__name"}
@@ -55,11 +62,20 @@ def parse_toc(soup):
     value is the link to the section.
     :rtype: dict
     """
+    logger.debug("Parsing Table of Contents")
     toc = soup.find("div", {"class": "table-of-contents"})
     toc_dict = {}
     for link in toc.find_all("a"):
         toc_dict[link.get_text()] = link.get("href")
     return toc_dict
+
+
+def url_type(url):
+    parsed_url = urlparse(url)
+    if parsed_url.path == "":
+        return "main_page"
+    else:
+        return urlparse(url).path[1:-1].partition("/")[0]
 
 
 def parse_link(soup_link):
@@ -72,6 +88,7 @@ def parse_link(soup_link):
     :return: A dict of information about the link.
     :rtype: dict
     """
+    logger.debug("Parsing Link")
     is_wikimedia_link = to_bool(soup_link.get("data-is-wikimedia-link"))
     if is_wikimedia_link:
         wikimedia_data = {
@@ -113,7 +130,6 @@ def parse_link(soup_link):
                     "About Omnipedia",
                     "View changes",
                     "Random article",
-                    "Main page",
                     "Log in",
                     "Privacy policy",
                     "Close",
@@ -125,6 +141,8 @@ def parse_link(soup_link):
                 or is_date(link_dict["link_text"])
             ):
                 return "site_nav"
+            elif link_dict["link_text"] == "Main page":
+                return "main_page"
         if hasattr(link_dict["class"], "__iter__"):
             if "ambientimpact-is-image-link" in link_dict["class"]:
                 return "image"
@@ -146,6 +164,52 @@ def parse_link(soup_link):
     return link_dict
 
 
+def parse_main_page(client, url):
+    page = client.get(url)
+    soup = BeautifulSoup(page.content, "html.parser")
+    parsed_url = urlparse(url)
+
+    def parse_news_item(li):
+        return {
+            "text": li.get_text(),
+            "links": [parse_link(link) for link in li.find_all("a")],
+        }
+
+    return {
+        "url": url,
+        "url_scheme": parsed_url.scheme,
+        "url_host": parsed_url.netloc,
+        "url_path": parsed_url.path,
+        "page_title": soup.find("title").get_text(),
+        "page_date": soup.find("time", {"class": "omnipedia-current-date"}).get(
+            "datetime"
+        ),
+        "featured_article": {
+            "text": soup.find(
+                "div",
+                {"class": "omnipedia-main-page__featured-article-content"},
+            ).get_text(),
+            "link": parse_link(
+                soup.find(
+                    "a", {"class": "omnipedia-main-page__featured-article-link"}
+                )
+            ),
+        },
+        "news": {
+            "items": [
+                parse_news_item(item)
+                for item in soup.find(
+                    "div",
+                    {
+                        "class": "omnipedia-main-page__content omnipedia-main-page__news-content"  # noqa
+                    },
+                ).find_all("li")
+            ]
+        },
+        "links": [parse_link(link) for link in soup.find_all("a")],
+    }
+
+
 def parse_wiki_page(client, url):
     """
     Parse a wiki page
@@ -161,9 +225,10 @@ def parse_wiki_page(client, url):
     - List of links found in the page
     :rtype: dict
     """
+    logger.info(f"Parsing {url}")
     page = client.get(url)
     soup = BeautifulSoup(page.content, "html.parser")
-    parsed_url = urllib.parse.urlparse(url)
+    parsed_url = urlparse(url)
     return {
         "url": url,
         "url_scheme": parsed_url.scheme,
@@ -192,10 +257,19 @@ def parse_wiki(client, url):
 
     def wiki_parser(client, url):
         if url not in urls:
-            print(f"Scraping {url}")
-            page_data = parse_wiki_page(client, url)
+            if len(urls) > 0:
+                logger.debug("Waiting a moment to parse the next page")
+                time.sleep(1)
+            if url_type(url) == "main_page":
+                page_data = parse_main_page(client, url)
+            elif url_type(url) == "wiki":
+                page_data = parse_wiki_page(client, url)
+            else:
+                logger.info("page type not recognized:")
+                logger.info(url)
             urls.append(url)
             res.append(page_data)
+            # left off here. there should be a special parser to extract links out of main page.
             links = [
                 page_data["url_scheme"]
                 + "://"
@@ -206,8 +280,6 @@ def parse_wiki(client, url):
             ]
             for link in links:
                 wiki_parser(client, link)
-                print("Waiting a moment to parse the next page")
-                time.sleep(1)
 
     wiki_parser(client, url)
     return res
