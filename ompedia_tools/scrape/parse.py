@@ -1,10 +1,8 @@
 """
 Parsers
 
-Functions related to parsing things out of beautiful soup objects.
+Functions related to parsing things out of bs4 objects from omnipedia.
 """
-import time
-from typing import Iterable
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
@@ -249,37 +247,3 @@ def parse_wiki_page(client, url):
         "toc": parse_toc(soup),
         "links": [parse_link(link) for link in soup.find_all("a")],
     }
-
-
-def parse_wiki(client, url):
-    urls = []
-    res = []
-
-    def wiki_parser(client, url):
-        if url not in urls:
-            if len(urls) > 0:
-                logger.debug("Waiting a moment to parse the next page")
-                time.sleep(1)
-            if url_type(url) == "main_page":
-                page_data = parse_main_page(client, url)
-            elif url_type(url) == "wiki":
-                page_data = parse_wiki_page(client, url)
-            else:
-                logger.info("page type not recognized:")
-                logger.info(url)
-            urls.append(url)
-            res.append(page_data)
-            # left off here. there should be a special parser to extract links out of main page.
-            links = [
-                page_data["url_scheme"]
-                + "://"
-                + page_data["url_host"]
-                + link["url"]
-                for link in page_data["links"]
-                if link["type"] == "wiki_page_link"
-            ]
-            for link in links:
-                wiki_parser(client, link)
-
-    wiki_parser(client, url)
-    return res
